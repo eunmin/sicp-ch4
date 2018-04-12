@@ -58,6 +58,7 @@
 (declare expand-clauses)
 (declare primitive-procedure-names)
 (declare primitive-procedure-objects)
+(declare true?)
 
 (defn eval [exp env]
   (cond
@@ -293,6 +294,7 @@
   (nth p 3))
 
 ;; environment
+;; '({a 1 b 2} {a 2} {c 3})
 
 (defn enclosing-environment [env]
   (rest env))
@@ -303,41 +305,29 @@
 (def the-empty-environment '())
 
 (defn make-frame [variables values]
-  (cons variables values))
+  (apply hash-map (interleave variables values)))
 
 (defn frame-variables [frame]
-  (first frame))
+  (keys frame))
 
 (defn frame-values [frame]
-  (rest frame))
+  (vals frame))
 
 (defn add-binding-to-frame! [var val frame]
-  #_(set-car! frame (cons var (first frame)))
-  #_(set-cdr! frame (cons val (rest frame))))
+  (assoc frame var val))
 
 (defn extend-environment [vars vals base-env]
-  #_(if (= (count vars) (count vals))
-      (cons (make-frame vars vals) base-env)
-      (if (< (count vars) (count vals))
-        (throw (ex-info "Too many arguments supplied" {:vars vars :vals vals}))
-        (throw (ex-info "Too few arguments supplied" {:vars vars :vals vals})))))
+  (if (= (count vars) (count vals))
+    (cons (make-frame vars vals) base-env)
+    (if (< (count vars) (count vals))
+      (throw (ex-info "Too many arguments supplied" {:vars vars :vals vals}))
+      (throw (ex-info "Too few arguments supplied" {:vars vars :vals vals})))))
 
 (defn lookup-variable-value [var env]
-  #_(define (env-loop env)
-      (define (scan vars vals)
-        (cond ((null? vars)
-               (env-loop (enclosing-environment env)))
-              ((eq? var (car vars))
-               (car vals))
-              (else (scan (cdr vars) (cdr vals)))))
-      (if (eq? env the-empty-environment)
-        (error "Unbound variable" var)
-        (let ((frame (first-frame env)))
-          (scan (frame-variables frame)
-                (frame-values frame)))))
-  #_(env-loop env))
+  (get (clojure.core/apply merge (reverse @env)) var))
 
 (defn set-variable-value! [var val env]
+  ()
   #_(define (env-loop env)
       (define (scan vars vals)
         (cond ((null? vars)
@@ -393,5 +383,3 @@
 
 (defn apply-primitive-procedure [proc args]
   (apply-in-underlying-clojure (primitive-implementation proc) args))
-
-(eval '(+ 1 2) '())
