@@ -88,7 +88,7 @@
 
 (defn list-of-values [exps env]
   (if (no-operands? exps)
-    []
+    '()
     (cons (eval (first-operand exps) env)
           (list-of-values (rest-operands exps) env))))
 
@@ -228,7 +228,7 @@
   (rest exp))
 
 (defn no-operands? [ops]
-  (nil? ops))
+  (empty? ops))
 
 (defn first-operand [ops]
   (first ops))
@@ -302,10 +302,10 @@
 (defn first-frame [env]
   (first env))
 
-(def the-empty-environment '())
+(def the-empty-environment (atom '()))
 
 (defn make-frame [variables values]
-  (apply hash-map (interleave variables values)))
+  (clojure.core/apply hash-map (interleave variables values)))
 
 (defn frame-variables [frame]
   (keys frame))
@@ -313,12 +313,9 @@
 (defn frame-values [frame]
   (vals frame))
 
-(defn add-binding-to-frame! [var val frame]
-  (assoc frame var val))
-
 (defn extend-environment [vars vals base-env]
   (if (= (count vars) (count vals))
-    (cons (make-frame vars vals) base-env)
+    (atom (cons (make-frame vars vals) @base-env))
     (if (< (count vars) (count vals))
       (throw (ex-info "Too many arguments supplied" {:vars vars :vals vals}))
       (throw (ex-info "Too few arguments supplied" {:vars vars :vals vals})))))
@@ -327,35 +324,21 @@
   (get (clojure.core/apply merge (reverse @env)) var))
 
 (defn set-variable-value! [var val env]
-  ()
-  #_(define (env-loop env)
-      (define (scan vars vals)
-        (cond ((null? vars)
-               (env-loop (enclosing-environment env)))
-              ((eq? var (car vars))
-               (set-car! vals val))
-              (else (scan (cdr vars) (cdr vals)))))
-      (if (eq? env the-empty-environment)
-        (error "Unbound variable -- SET!" var)
-        (let ((frame (first-frame env)))
-          (scan (frame-variables frame)
-                (frame-values frame)))))
-  #_(env-loop env))
+  (swap! env #(loop [env %
+                     rs '()]
+                (if (seq env)
+                  (let [current-frame (first-frame env)]
+                    (if (contains? current-frame var)
+                      (concat rs (list (assoc current-frame var val)) (rest env))
+                      (recur (enclosing-environment env) (concat rs (list current-frame)))))
+                  rs))))
 
 (defn define-variable! [var val env]
-  #_(let ((frame (first-frame env)))
-      (define (scan vars vals)
-        (cond ((null? vars)
-               (add-binding-to-frame! var val frame))
-              ((eq? var (car vars))
-               (set-car! vals val))
-              (else (scan (cdr vars) (cdr vals)))))
-      (scan (frame-variables frame)
-            (frame-values frame))))
+  (swap! env #(clojure.core/apply list (assoc-in (vec %) [0 var] val))))
 
 (defn setup-environment []
-  (let [initial-env (extend-environment (primitive-procedure-names)
-                                        (primitive-procedure-objects)
+  (let [initial-env (extend-environment primitive-procedure-names
+                                        primitive-procedure-objects
                                         the-empty-environment)]
     (define-variable! 'true true initial-env)
     (define-variable! 'false false initial-env)
@@ -383,3 +366,5 @@
 
 (defn apply-primitive-procedure [proc args]
   (apply-in-underlying-clojure (primitive-implementation proc) args))
+
+(eval '(cdr '(1 2 3)) (setup-environment))
