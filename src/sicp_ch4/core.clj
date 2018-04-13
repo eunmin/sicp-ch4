@@ -1,7 +1,10 @@
 (ns sicp-ch4.core
+  (:gen-class)
   (:refer-clojure :exclude [eval apply true? false?]))
 
 (def apply-in-underlying-clojure clojure.core/apply)
+
+(declare eval)
 
 (defn true? [x]
   (not (= x false)))
@@ -10,7 +13,7 @@
   (= x false))
 
 (defn tagged-list? [exp tag]
-  (if (list? exp)
+  (if (seq? exp)
     (= (first exp) tag)
     false))
 
@@ -81,6 +84,11 @@
         (list 'cdr rest)
         (list '+ +)
         (list '- -)
+        (list 'mod mod)
+        (list '= =)
+        (list '> >)
+        (list '< <)
+        (list 'reverse reverse)
         (list 'cons cons)
         (list 'null? nil?)))
 
@@ -119,7 +127,9 @@
       (throw (ex-info "Too few arguments supplied" {:vars vars :vals vals})))))
 
 (defn lookup-variable-value [var env]
-  (get (clojure.core/apply merge (reverse @env)) var))
+  (if-let [rst (get (clojure.core/apply merge (reverse @env)) var)]
+    rst
+    (throw (ex-info "Unbound variable" {:var var}))))
 
 (defn set-variable-value! [var val env]
   (swap! env #(loop [env %
@@ -145,7 +155,7 @@
 ;; application
 
 (defn application? [exp]
-  (list? exp))
+  (seq? exp))
 
 (defn operator [exp]
   (first exp))
@@ -174,7 +184,7 @@
   (nth exp 2))
 
 (defn if-alternative [exp]
-  (if-not (nil? (rest (rest (rest exp))))
+  (if-not (empty? (rest (rest (rest exp))))
     (first (rest (rest (rest exp))))
     'false))
 
@@ -213,23 +223,6 @@
 (defn cond-actions [clause]
   (rest clause))
 
-(defn expand-clauses [clauses]
-  (if (nil? clauses)
-    'false
-    (let [first (first clauses)
-          rst (rest clauses)]
-      (if (cond-else-clause? first)
-        (if (nil? rst)
-          (sequence->exp (cond-actions first))
-          (throw (ex-info "ELSE clause isn't last -- COND->IF"
-                          {:clauses clauses})))
-        (make-if (cond-predicate first)
-                 (sequence->exp (cond-actions first))
-                 (expand-clauses rst))))))
-
-(defn cond->if [exp]
-  (expand-clauses (cond-clauses exp)))
-
 ;; begin
 
 (defn begin? [exp]
@@ -239,7 +232,7 @@
   (rest exp))
 
 (defn last-exp? [seq]
-  (nil? (rest seq)))
+  (empty? (rest seq)))
 
 (defn first-exp [seq]
   (first seq))
@@ -251,11 +244,29 @@
   (cons 'begin seq))
 
 (defn sequence->exp [seq]
-  (cond (nil? seq) seq
+  (cond (empty? seq) seq
         (last-exp? seq) (first-exp seq)
         :else (make-begin seq)))
 
+(defn expand-clauses [clauses]
+  (if (empty? clauses)
+    'false
+    (let [first (first clauses)
+          rst (rest clauses)]
+      (if (cond-else-clause? first)
+        (if (empty? rst)
+          (sequence->exp (cond-actions first))
+          (throw (ex-info "ELSE clause isn't last -- COND->IF"
+                          {:clauses clauses})))
+        (make-if (cond-predicate first)
+                 (sequence->exp (cond-actions first))
+                 (expand-clauses rst))))))
+
+(defn cond->if [exp]
+  (expand-clauses (cond-clauses exp)))
+
 (defn list-of-values [exps env]
+  (println "list of values:" exps)
   (if (no-operands? exps)
     '()
     (cons (eval (first-operand exps) env)
@@ -267,6 +278,7 @@
     (eval (if-alternative exp) env)))
 
 (defn eval-sequence [exps env]
+  (println "eval-seq:" exps)
   (cond (last-exp? exps) (eval (first-exp exps) env)
         :else (do (eval (first-exp exps) env)
                   (eval-sequence (rest-exps exps) env))))
@@ -284,6 +296,7 @@
   'ok)
 
 (defn apply [proc args]
+  (println "apply:" (take 2 proc))
   (cond
     (primitive-procedure? proc) (apply-primitive-procedure proc args)
     (compound-procedure? proc) (eval-sequence (procedure-body proc)
@@ -293,20 +306,55 @@
     :else (throw (ex-info "Unknown procedure type -- APPLY" {:proc proc}))))
 
 (defn eval [exp env]
-  (cond
-    (self-evaluating? exp) exp
-    (variable? exp) (lookup-variable-value exp env)
-    (quoted? exp) (text-of-quotation exp)
-    (assignment? exp) (eval-assignment exp env)
-    (definition? exp) (eval-definition exp env)
-    (if? exp) (eval-if exp env)
-    (lambda? exp) (make-procedure (lambda-parameters exp)
-                                  (lambda-body exp)
-                                  env)
-    (begin? exp) (eval-sequence (begin-actions exp) env)
-    (cond? exp) (eval (cond->if exp) env)
-    (application? exp) (apply (eval (operator exp) env)
-                              (list-of-values (operands exp) env))
-    :else (throw (ex-info "Unknown expression type -- EVAL" {:exp exp}))))
+  (let [rst (cond
+              (self-evaluating? exp) (do
+                                       (println "eval self-evaluating:" exp)
+                                       exp)
+              (variable? exp) (do
+                                (println "eval variable:" exp)
+                                (lookup-variable-value exp env))
+              (quoted? exp) (do
+                              (println "eval qouted:" exp)
+                              (text-of-quotation exp))
+              (assignment? exp) (do
+                                  (println "eval assignment:" exp)
+                                  (eval-assignment exp env))
+              (definition? exp) (do
+                                  (println "eval definition:" exp)
+                                  (eval-definition exp env))
+              (if? exp) (do
+                          (println "eval if:" exp)
+                          (eval-if exp env))
+              (lambda? exp) (do
+                              (println "eval lambda:" exp)
+                              (make-procedure (lambda-parameters exp)
+                                              (lambda-body exp)
+                                              env))
+              (begin? exp) (do
+                             (println "eval begin:" exp)
+                             (eval-sequence (begin-actions exp) env))
+              (cond? exp) (do
+                            (println "eval cond:" exp)
+                            (eval (cond->if exp) env))
+              (application? exp) (do
+                                   (println "eval application:" exp)
+                                   (apply (eval (operator exp) env)
+                                          (list-of-values (operands exp) env)))
+              :else (throw (ex-info "Unknown expression type -- EVAL" {:exp exp})))]
+    rst))
 
-(eval '(cdr '(1 2 3)) (setup-environment))
+(def env (setup-environment))
+
+(def code '(begin
+            (define (fizzbuzz i result)
+              (if (< i 11)
+                (fizzbuzz (+ i 1) (cons (cond
+                                          ((= (mod i 3) 0) "Fizz")
+                                          ((= (mod i 5) 0) "Buzz")
+                                          (else i)) result))
+                (reverse result)))
+            (fizzbuzz 1 (quote ()))))
+
+(defn -main []
+  (set! *print-length* 30)
+  (println (eval code env)))
