@@ -305,43 +305,106 @@
                                                                   (procedure-environment proc)))
     :else (throw (ex-info "Unknown procedure type -- APPLY" {:proc proc}))))
 
+(declare analyze)
+
+(defn analyze-self-evaluating [exp]
+  (println "analyze self-evaluating:" exp)
+  (fn [env]
+    exp))
+
+(defn analyze-quoted [exp]
+  (println "analyze qouted:" exp)
+  (let [qval (text-of-quotation exp)]
+    (fn [env]
+      qval)))
+
+(defn analyze-variable [exp]
+  (println "analyze variable:" exp)
+  (fn [env]
+    (lookup-variable-value exp env)))
+
+(defn analyze-assignment [exp]
+  (println "analyze assignment:" exp)
+  (let [var (assignment-variable exp)
+        vproc (analyze (assignment-value exp))]
+    (fn [env]
+      (set-variable-value! var (vproc env) env)
+      'ok)))
+
+(defn analyze-definition [exp]
+  (println "analyze definition:" exp)
+  (let [var (definition-variable exp)
+        vproc (analyze (definition-value exp))]
+    (fn [env]
+      (define-variable! var (vproc env) env)
+      'ok)))
+
+(defn analyze-if [exp]
+  (println "analyze if:" exp)
+  (let [pproc (analyze (if-predicate exp))
+        cproc (analyze (if-consequent exp))
+        aproc (analyze (if-alternative exp))]
+    (fn [env]
+      (if (true? (pproc env))
+        (cproc env)
+        (aproc env)))))
+
+(defn analyze-sequence [exps]
+  (println "analyze sequence:" exps)
+  (let [sequentially (fn [proc1 proc2]
+                       (fn [env]
+                         (proc1 env)
+                         (proc2 env)))
+        procs (map analyze exps)]
+    (if (empty? procs)
+      (throw (ex-info "Empty sequence -- ANALYZE" {}))
+      (loop [first-proc (first procs)
+             rest-procs (rest procs)]
+        (if (empty? rest-procs)
+          first-proc
+          (recur (sequentially first-proc (first rest-procs))
+                 (rest rest-procs)))))))
+
+(defn analyze-lambda [exp]
+  (println "analyze lambda:" exp)
+  (let [vars (lambda-parameters exp)
+        bproc (analyze-sequence (lambda-body exp))]
+    (fn [env]
+      (make-procedure vars bproc env))))
+
+(defn execute-application [proc args]
+  (cond (primitive-procedure? proc) (apply-primitive-procedure proc args)
+        (compound-procedure? proc) ((procedure-body proc)
+                                    (extend-environment (procedure-parameters proc)
+                                                        args
+                                                        (procedure-environment proc)))
+        :else (ex-info "Unknown procedure type -- EXECUTE-APPLICATION" {:proc proc})))
+
+(defn analyze-application [exp]
+  (println "analyze application:" exp)
+  (let [fproc (analyze (operator exp))
+        aprocs (map analyze (operands exp))]
+    (fn [env]
+      (execute-application (fproc env) (map #(% env) aprocs)))))
+
+(defn analyze [exp]
+  (cond
+    (self-evaluating? exp) (analyze-self-evaluating exp)
+    (quoted? exp) (analyze-quoted exp)
+    (variable? exp) (analyze-variable exp)
+    (assignment? exp) (analyze-assignment exp)
+    (definition? exp) (analyze-definition exp)
+    (if? exp) (analyze-if exp)
+    (lambda? exp) (analyze-lambda exp)
+    (begin? exp) (analyze-sequence (begin-actions exp))
+    (cond? exp) (do
+                  (println "analyze cond:" exp)
+                  (analyze (cond->if exp)))
+    (application? exp) (analyze-application exp)
+    :else (throw (ex-info "Unknown expression type -- ANALYZE" {:exp exp}))))
+
 (defn eval [exp env]
-  (let [rst (cond
-              (self-evaluating? exp) (do
-                                       (println "eval self-evaluating:" exp)
-                                       exp)
-              (variable? exp) (do
-                                (println "eval variable:" exp)
-                                (lookup-variable-value exp env))
-              (quoted? exp) (do
-                              (println "eval qouted:" exp)
-                              (text-of-quotation exp))
-              (assignment? exp) (do
-                                  (println "eval assignment:" exp)
-                                  (eval-assignment exp env))
-              (definition? exp) (do
-                                  (println "eval definition:" exp)
-                                  (eval-definition exp env))
-              (if? exp) (do
-                          (println "eval if:" exp)
-                          (eval-if exp env))
-              (lambda? exp) (do
-                              (println "eval lambda:" exp)
-                              (make-procedure (lambda-parameters exp)
-                                              (lambda-body exp)
-                                              env))
-              (begin? exp) (do
-                             (println "eval begin:" exp)
-                             (eval-sequence (begin-actions exp) env))
-              (cond? exp) (do
-                            (println "eval cond:" exp)
-                            (eval (cond->if exp) env))
-              (application? exp) (do
-                                   (println "eval application:" exp)
-                                   (apply (eval (operator exp) env)
-                                          (list-of-values (operands exp) env)))
-              :else (throw (ex-info "Unknown expression type -- EVAL" {:exp exp})))]
-    rst))
+  ((analyze exp) env))
 
 (def env (setup-environment))
 
